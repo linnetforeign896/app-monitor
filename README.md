@@ -16,7 +16,7 @@ The app is built as a Swift Package executable with a lightweight SQLite-backed 
 | --- | --- |
 | ![Warnings dashboard](docs/assets/app-monitor-warnings.png) | ![Updates dashboard](docs/assets/app-monitor-updates.png) |
 
-| Cleanup Suggestions | History |
+| Quarantine Review | History |
 | --- | --- |
 | ![Cleanup suggestions dashboard](docs/assets/app-monitor-cleanup-suggestions.png) | ![History dashboard](docs/assets/app-monitor-history.png) |
 
@@ -27,18 +27,46 @@ The app is built as a Swift Package executable with a lightweight SQLite-backed 
 - Usage analytics for totals, daily trends, top apps, heatmaps, and timeline sessions.
 - Spotlight usage import for historical last-used dates, use counts, and used days.
 - Storage scans for app bundles and related Application Support, cache, container, preference, log, WebKit, cookie, and diagnostic paths.
-- Cleanup suggestions with review, quarantine, restore, and action history flows.
+- Quarantine review with exact-path preview, queued approval, restore, and action history flows.
 - Large-file review and warning surfaces.
 - App health checks for code signing, Gatekeeper, stale bundles, crashes, and permission-sensitive paths.
 - Update checks for Mac App Store apps, Homebrew casks/formulae, Apple software updates, and direct-download apps with Sparkle feeds.
 - Guided uninstall planning that moves selected app and support files to Trash.
 - CSV exports for app tables, daily usage, timeline sessions, summaries, trend buckets, top apps, and heatmaps.
 
+## How It Compares
+
+App Monitor is meant to sit between usage trackers, cleanup tools, update checkers, and uninstall helpers:
+
+- Compared with pure usage trackers, it keeps local foreground usage history alongside app storage and health context.
+- Compared with cleaner apps, it defaults to review and quarantine instead of permanent deletion.
+- Compared with uninstall tools, it shows an uninstall plan and affected paths before moving selected items to Trash.
+- Compared with update checkers, it combines Mac App Store, Homebrew, Apple software update, and Sparkle/direct-download signals in one local view.
+
+It is not trying to replace dedicated package managers, malware scanners, or deep disk visualizers. The goal is a native, local-first dashboard that makes app-related usage, storage, warnings, cleanup candidates, updates, and uninstall impact easier to inspect together.
+
 ## Requirements
 
 - macOS 14 or newer.
 - Xcode command line tools or Xcode with Swift 5.9 support.
 - Optional: Homebrew and `mas` for Homebrew and Mac App Store update checks.
+
+## Install Beta
+
+Install the current Homebrew beta with:
+
+```bash
+brew install --cask jcranokc/tap/app-monitor@beta
+```
+
+Or tap first, then install:
+
+```bash
+brew tap jcranokc/tap
+brew install --cask app-monitor@beta
+```
+
+The tap lives at [jcranokc/homebrew-tap](https://github.com/jcranokc/homebrew-tap).
 
 ## Build And Run
 
@@ -101,7 +129,7 @@ It does not include telemetry, accounts, or a hosted backend. Optional update ch
 
 ## Safety Notes
 
-App Monitor can inspect local app-related storage and can move selected files to quarantine or Trash. Review cleanup and uninstall plans before applying them, especially for containers, preferences, Application Support data, and group containers that may contain user data.
+App Monitor can inspect local app-related storage and can move selected files to quarantine or Trash. Cleanup candidates are shown as a quarantine review: preview the exact path, queue only the items you approve, move them to App Monitor quarantine, and restore from History while the quarantined item remains available. Review cleanup and uninstall plans before applying them, especially for containers, preferences, Application Support data, and group containers that may contain user data.
 
 Update installs may require administrator authorization or third-party package manager behavior outside this project.
 
