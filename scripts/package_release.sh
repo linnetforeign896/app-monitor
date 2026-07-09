@@ -19,12 +19,12 @@ if [[ -z "$BUILD_NUMBER" ]]; then
   BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || echo 1)"
 fi
 
-TAG_NAME="${APP_MONITOR_TAG:-v$VERSION}"
+TAG_NAME="${APP_MONITOR_TAG:-beta}"
 APPCAST_URL="${APP_MONITOR_APPCAST_URL:-https://github.com/$REPOSITORY/releases/latest/download/appcast.xml}"
 RELEASE_BASE_URL="${APP_MONITOR_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases/download/$TAG_NAME}"
 RELEASE_DIR="$ROOT_DIR/build/release"
 APP_DIR="$ROOT_DIR/build/App Monitor.app"
-ZIP_NAME="App-Monitor-$VERSION.zip"
+ZIP_NAME="${APP_MONITOR_ZIP_NAME:-App-Monitor-Beta.zip}"
 DMG_NAME="${APP_MONITOR_DMG_NAME:-App-Monitor-Beta.dmg}"
 ZIP_PATH="$RELEASE_DIR/$ZIP_NAME"
 DMG_PATH="$RELEASE_DIR/$DMG_NAME"
@@ -33,6 +33,7 @@ SHA_PATH="$RELEASE_DIR/SHA256SUMS"
 NOTARY_PROFILE="${APP_MONITOR_NOTARY_PROFILE:-}"
 SIGN_IDENTITY="${APP_MONITOR_SIGN_IDENTITY:-}"
 DMG_ICON="$ROOT_DIR/Sources/AppMonitor/Resources/AppMonitorIcon.icns"
+RELEASE_DISPLAY_NAME="${APP_MONITOR_RELEASE_DISPLAY_NAME:-App Monitor Beta}"
 
 cd "$ROOT_DIR"
 rm -rf "$RELEASE_DIR"
@@ -117,7 +118,7 @@ cat > "$APPCAST_PATH" <<XML
     <link>https://github.com/$REPOSITORY/releases</link>
     <description>App Monitor release feed.</description>
     <item>
-      <title>App Monitor $VERSION</title>
+      <title>$RELEASE_DISPLAY_NAME</title>
       <pubDate>$PUB_DATE</pubDate>
       <sparkle:releaseNotesLink>$RELEASE_NOTES_URL</sparkle:releaseNotesLink>
       <enclosure

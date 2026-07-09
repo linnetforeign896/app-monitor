@@ -4,7 +4,7 @@ App Monitor update discovery is wired through the app's existing direct-download
 
 - `scripts/build_app.sh` writes `CFBundleShortVersionString`, `CFBundleVersion`, and `SUFeedURL` into the packaged app.
 - `scripts/build_app.sh` signs ad hoc by default. Set `APP_MONITOR_SIGN_IDENTITY` to a Developer ID Application identity to sign with hardened runtime and a timestamp.
-- `scripts/package_release.sh` builds `build/App Monitor.app`, creates `build/release/App-Monitor-<version>.zip`, creates `build/release/App-Monitor-Beta.dmg` with the App Monitor volume icon, and generates `build/release/appcast.xml`.
+- `scripts/package_release.sh` builds `build/App Monitor.app`, creates `build/release/App-Monitor-Beta.zip`, creates `build/release/App-Monitor-Beta.dmg` with the App Monitor volume icon, and generates `build/release/appcast.xml`.
 - `gh release create` publishes the zip, DMG, appcast, and checksum file to a GitHub Release.
 - The app checks `https://github.com/jcranokc/app-monitor/releases/latest/download/appcast.xml` during update scans and opens the release asset when a newer version is available.
 
@@ -37,7 +37,7 @@ cat build/release/appcast.xml
 
 The local packaging command writes:
 
-- `build/release/App-Monitor-<version>.zip`
+- `build/release/App-Monitor-Beta.zip`
 - `build/release/App-Monitor-Beta.dmg`
 - `build/release/appcast.xml`
 - `build/release/SHA256SUMS`
@@ -108,14 +108,14 @@ After you make a change and commit it:
 ```bash
 git push origin main
 ./scripts/package_release.sh 1.1.0 2
-gh release create v1.1.0 \
-  build/release/App-Monitor-1.1.0.zip \
+gh release create beta \
+  build/release/App-Monitor-Beta.zip \
   build/release/App-Monitor-Beta.dmg \
   build/release/appcast.xml \
   build/release/SHA256SUMS \
   --target main \
-  --title "App Monitor 1.1.0" \
-  --notes "App Monitor 1.1.0 release."
+  --title "App Monitor Beta" \
+  --notes "App Monitor beta release."
 ```
 
 Use a new version tag every time you want installed copies of App Monitor to see an update. Ordinary pushes to `main` do not publish an app update by themselves.
