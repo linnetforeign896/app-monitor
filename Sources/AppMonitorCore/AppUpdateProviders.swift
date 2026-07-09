@@ -522,19 +522,28 @@ public struct DirectDownloadUpdateProvider: AppUpdateProvider, @unchecked Sendab
     }
 }
 
-public struct SparkleAppcastItem: Hashable {
+public struct SparkleAppcastItem: Hashable, Sendable {
     public let version: String?
     public let title: String?
     public let url: URL?
     public let summary: String?
     public let releaseNotesURL: URL?
+    public let sha256: String?
 
-    public init(version: String?, title: String?, url: URL?, summary: String? = nil, releaseNotesURL: URL? = nil) {
+    public init(
+        version: String?,
+        title: String?,
+        url: URL?,
+        summary: String? = nil,
+        releaseNotesURL: URL? = nil,
+        sha256: String? = nil
+    ) {
         self.version = version
         self.title = title
         self.url = url
         self.summary = summary
         self.releaseNotesURL = releaseNotesURL
+        self.sha256 = sha256
     }
 }
 
@@ -594,6 +603,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
     private var currentReleaseNotesURL: URL?
     private var currentVersion: String?
     private var currentURL: URL?
+    private var currentSHA256: String?
 
     func parser(
         _ parser: XMLParser,
@@ -610,6 +620,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
             currentReleaseNotesURL = nil
             currentVersion = nil
             currentURL = nil
+            currentSHA256 = nil
         }
         guard isInsideItem else { return }
         if elementName == "enclosure" {
@@ -617,6 +628,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
                 ?? attributeDict["sparkle:version"]
                 ?? currentVersion
             currentURL = attributeDict["url"].flatMap(URL.init(string:))
+            currentSHA256 = attributeDict["sparkle:sha256"] ?? currentSHA256
             currentReleaseNotesURL = attributeDict["sparkle:releaseNotesLink"].flatMap(URL.init(string:))
                 ?? currentReleaseNotesURL
         }
@@ -629,6 +641,16 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
             currentTitle += string
         case "description":
             currentSummary += string
+        case "sparkle:shortVersionString", "shortVersionString":
+            let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                currentVersion = value
+            }
+        case "sparkle:version", "version":
+            let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty, currentVersion == nil {
+                currentVersion = value
+            }
         case "sparkle:releaseNotesLink", "releaseNotesLink":
             currentReleaseNotesURL = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)) ?? currentReleaseNotesURL
         default:
@@ -648,7 +670,8 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
                 title: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                 url: currentURL,
                 summary: currentSummary.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-                releaseNotesURL: currentReleaseNotesURL
+                releaseNotesURL: currentReleaseNotesURL,
+                sha256: currentSHA256
             ))
             isInsideItem = false
         }

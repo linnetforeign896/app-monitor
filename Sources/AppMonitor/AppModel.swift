@@ -1,5 +1,6 @@
 import AppKit
 import AppMonitorCore
+import CryptoKit
 import Foundation
 import ServiceManagement
 import SwiftUI
@@ -58,6 +59,32 @@ struct OperationProgressSnapshot: Equatable {
         formatter.numberStyle = .decimal
         return formatter
     }()
+}
+
+private struct AppMonitorUpdateInstallPlan: Sendable {
+    let stagedAppURL: URL
+    let workDirectoryURL: URL
+    let currentBundleURL: URL
+}
+
+private enum AppMonitorSelfUpdateError: LocalizedError {
+    case missingPackageURL
+    case unsupportedPackage(String)
+    case appBundleNotFound
+    case checksumMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .missingPackageURL:
+            return "The update feed did not include a downloadable package."
+        case let .unsupportedPackage(pathExtension):
+            return "App Monitor cannot install .\(pathExtension) update packages yet."
+        case .appBundleNotFound:
+            return "The update package did not contain App Monitor.app."
+        case .checksumMismatch:
+            return "The downloaded update did not match the appcast checksum."
+        }
+    }
 }
 
 @MainActor
@@ -186,10 +213,20 @@ final class AppModel: ObservableObject {
     @Published var cleanupProgress = OperationProgressSnapshot.idle
     @Published var isCheckingUpdates = false
     @Published var isRunningUpdates = false
+    @Published var isCheckingAppMonitorUpdate = false
+    @Published var isInstallingAppMonitorUpdate = false
     @Published var updateProgress = OperationProgressSnapshot.idle
     @Published var updateRecords: [AppUpdateRecord] = []
     @Published var selectedUpdateIDs: Set<String> = []
     @Published var updateSettings = AppUpdateSettings()
+    @Published var appMonitorUpdateRecord: AppUpdateRecord?
+    @Published var appMonitorUpdateItem: SparkleAppcastItem?
+    @Published var appMonitorUpdateLastCheckAt = AppModel.loadAppMonitorUpdateLastCheckAt()
+    @Published var appMonitorUpdateNextCheckAt = AppModel.loadAppMonitorUpdateNextCheckAt()
+    @Published var appMonitorUpdateChecksEnabled = AppModel.loadAppMonitorUpdateChecksEnabled()
+    @Published var appMonitorAutomaticUpdatesEnabled = AppModel.loadAppMonitorAutomaticUpdatesEnabled()
+    @Published var appMonitorUpdateCadenceHours = AppModel.loadAppMonitorUpdateCadenceHours()
+    @Published var appMonitorUpdateMessage = AppModel.loadAppMonitorUpdateLastCheckAt() == nil ? "Not checked yet" : "No App Monitor update loaded."
     @Published var updateRuns: [UpdateRunRecord] = []
     @Published var updateItemResults: [UpdateItemResult] = []
     @Published var changeLogEntries: [AppChangeLogEntry] = []
@@ -251,8 +288,14 @@ final class AppModel: ObservableObject {
     private var terminationObserver: NSObjectProtocol?
     private var schedulerTimer: Timer?
     private var updateSchedulerTimer: Timer?
+    private var appMonitorUpdateSchedulerTimer: Timer?
     private var appListRowCounts: [AppListQuickFilter: Int] = [:]
     private var storageCategoriesByAppID: [String: Set<StorageCategory>] = [:]
+    private static let appMonitorUpdateLastCheckAtKey = "AppMonitorUpdateLastCheckAt"
+    private static let appMonitorUpdateNextCheckAtKey = "AppMonitorUpdateNextCheckAt"
+    private static let appMonitorUpdateChecksEnabledKey = "AppMonitorUpdateChecksEnabled"
+    private static let appMonitorAutomaticUpdatesEnabledKey = "AppMonitorAutomaticUpdatesEnabled"
+    private static let appMonitorUpdateCadenceHoursKey = "AppMonitorUpdateCadenceHours"
 
     private static let percentFormatter: NumberFormatter = {
         let formatter = NumberFormatter()
@@ -269,6 +312,27 @@ final class AppModel: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "ha"
         return formatter.string(from: date).lowercased()
+    }
+
+    private static func loadAppMonitorUpdateLastCheckAt() -> Date? {
+        UserDefaults.standard.object(forKey: appMonitorUpdateLastCheckAtKey) as? Date
+    }
+
+    private static func loadAppMonitorUpdateNextCheckAt() -> Date? {
+        UserDefaults.standard.object(forKey: appMonitorUpdateNextCheckAtKey) as? Date
+    }
+
+    private static func loadAppMonitorUpdateChecksEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: appMonitorUpdateChecksEnabledKey)
+    }
+
+    private static func loadAppMonitorAutomaticUpdatesEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: appMonitorAutomaticUpdatesEnabledKey)
+    }
+
+    private static func loadAppMonitorUpdateCadenceHours() -> Int {
+        let value = UserDefaults.standard.integer(forKey: appMonitorUpdateCadenceHoursKey)
+        return value > 0 ? value : 24
     }
 
     init() {
@@ -291,6 +355,7 @@ final class AppModel: ObservableObject {
     deinit {
         schedulerTimer?.invalidate()
         updateSchedulerTimer?.invalidate()
+        appMonitorUpdateSchedulerTimer?.invalidate()
         if let terminationObserver {
             NotificationCenter.default.removeObserver(terminationObserver)
         }
@@ -470,6 +535,7 @@ final class AppModel: ObservableObject {
         tracker.start()
         startScheduler()
         startUpdateScheduler()
+        startAppMonitorUpdateScheduler()
         await refreshInventory()
         await refreshImportedActivity()
     }
@@ -632,7 +698,7 @@ final class AppModel: ObservableObject {
             scannedFileCount: 0,
             scannedBytes: 0
         )
-        lastMessage = "Checking for app updates..."
+        lastMessage = "Checking for installed app updates..."
 
         do {
             let apps = try appsForUpdateChecks()
@@ -669,11 +735,11 @@ final class AppModel: ObservableObject {
             updateItemResults = try dataStore.fetchUpdateItemResults()
             changeLogEntries = try dataStore.fetchChangeLogEntries()
             try dataStore.recordAction(
-                title: "Checked Updates",
-                detail: "\(records.filter { $0.status.countsAsAvailable }.count) update\(records.filter { $0.status.countsAsAvailable }.count == 1 ? "" : "s") found"
+                title: "Checked Installed App Updates",
+                detail: "\(records.filter { $0.status.countsAsAvailable }.count) installed app update\(records.filter { $0.status.countsAsAvailable }.count == 1 ? "" : "s") found"
             )
             actionHistory = try dataStore.fetchActionHistory()
-            lastMessage = "Found \(availableUpdateCount) available update\(availableUpdateCount == 1 ? "" : "s")"
+            lastMessage = "Found \(availableUpdateCount) installed app update\(availableUpdateCount == 1 ? "" : "s")"
 
             if runAutomaticEligible, updateSettings.automaticUpdatesEnabled {
                 let eligible = updateRecords.filter(isUpdateAutoEligible)
@@ -682,11 +748,68 @@ final class AppModel: ObservableObject {
                 }
             }
         } catch {
-            lastMessage = "Update check failed: \(error.localizedDescription)"
+            lastMessage = "Installed app update check failed: \(error.localizedDescription)"
         }
 
         updateProgress = .idle
         isCheckingUpdates = false
+    }
+
+    func checkForAppMonitorUpdate(installIfAvailable: Bool = false) async {
+        guard !isCheckingAppMonitorUpdate, !isInstallingAppMonitorUpdate else { return }
+        isCheckingAppMonitorUpdate = true
+        appMonitorUpdateMessage = "Checking App Monitor..."
+        lastMessage = "Checking for App Monitor updates..."
+
+        defer {
+            isCheckingAppMonitorUpdate = false
+        }
+
+        guard let appcastURL = appMonitorAppcastURL() else {
+            appMonitorUpdateRecord = nil
+            appMonitorUpdateItem = nil
+            appMonitorUpdateMessage = "No App Monitor update feed is configured for this build."
+            lastMessage = appMonitorUpdateMessage
+            return
+        }
+
+        guard let currentApp = currentAppForUpdateDetection() else {
+            appMonitorUpdateRecord = nil
+            appMonitorUpdateItem = nil
+            appMonitorUpdateMessage = "App Monitor update checks are available from the packaged app."
+            lastMessage = appMonitorUpdateMessage
+            return
+        }
+
+        do {
+            let item = try await fetchAppMonitorUpdateItem(from: appcastURL)
+            let checkedAt = Date()
+            appMonitorUpdateLastCheckAt = checkedAt
+            UserDefaults.standard.set(checkedAt, forKey: Self.appMonitorUpdateLastCheckAtKey)
+            updateNextAppMonitorUpdateCheck(from: checkedAt)
+
+            guard item.version.map({ VersionComparator.isVersion($0, newerThan: currentApp.version) }) ?? false else {
+                appMonitorUpdateRecord = nil
+                appMonitorUpdateItem = nil
+                appMonitorUpdateMessage = "App Monitor is up to date."
+                lastMessage = appMonitorUpdateMessage
+                return
+            }
+
+            appMonitorUpdateItem = item
+            appMonitorUpdateRecord = appMonitorUpdateRecord(from: item, currentApp: currentApp, appcastURL: appcastURL, checkedAt: checkedAt)
+            appMonitorUpdateMessage = "App Monitor \(item.version ?? "update") is available."
+            lastMessage = appMonitorUpdateMessage
+
+            if installIfAvailable {
+                await installAppMonitorUpdate()
+            }
+        } catch {
+            appMonitorUpdateRecord = nil
+            appMonitorUpdateItem = nil
+            appMonitorUpdateMessage = "App Monitor update check failed: \(error.localizedDescription)"
+            lastMessage = appMonitorUpdateMessage
+        }
     }
 
     func setUpdateSelected(_ record: AppUpdateRecord, selected: Bool) {
@@ -733,6 +856,34 @@ final class AppModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func installAppMonitorUpdate() async {
+        guard !isInstallingAppMonitorUpdate else { return }
+        guard let item = appMonitorUpdateItem, item.url != nil else {
+            appMonitorUpdateMessage = "Check App Monitor first to load an update package."
+            lastMessage = appMonitorUpdateMessage
+            return
+        }
+
+        isInstallingAppMonitorUpdate = true
+        appMonitorUpdateMessage = "Preparing App Monitor update..."
+        lastMessage = appMonitorUpdateMessage
+
+        do {
+            let currentBundleURL = Bundle.main.bundleURL.standardizedFileURL
+            let plan = try await Task.detached(priority: .userInitiated) {
+                try await Self.prepareAppMonitorUpdateInstall(item: item, currentBundleURL: currentBundleURL)
+            }.value
+            try launchAppMonitorUpdateInstaller(plan: plan)
+            appMonitorUpdateMessage = "Installing App Monitor update. App Monitor will relaunch."
+            lastMessage = appMonitorUpdateMessage
+            NSApp.terminate(nil)
+        } catch {
+            appMonitorUpdateMessage = "App Monitor update install failed: \(error.localizedDescription)"
+            lastMessage = appMonitorUpdateMessage
+            isInstallingAppMonitorUpdate = false
+        }
+    }
+
     func isUpdateAutoEligible(_ record: AppUpdateRecord) -> Bool {
         AppUpdateEligibility.isAutoEligible(
             record: record,
@@ -754,6 +905,32 @@ final class AppModel: ObservableObject {
         }
         persistUpdateSettings()
         startUpdateScheduler()
+    }
+
+    func updateAppMonitorUpdateSchedule(enabled: Bool? = nil, cadenceHours: Int? = nil) {
+        if let enabled {
+            appMonitorUpdateChecksEnabled = enabled
+            UserDefaults.standard.set(enabled, forKey: Self.appMonitorUpdateChecksEnabledKey)
+            appMonitorUpdateNextCheckAt = enabled ? nextAppMonitorUpdateCheckDate() : nil
+            persistAppMonitorUpdateNextCheckAt()
+        }
+        if let cadenceHours {
+            appMonitorUpdateCadenceHours = cadenceHours
+            UserDefaults.standard.set(cadenceHours, forKey: Self.appMonitorUpdateCadenceHoursKey)
+            if appMonitorUpdateChecksEnabled {
+                appMonitorUpdateNextCheckAt = nextAppMonitorUpdateCheckDate()
+                persistAppMonitorUpdateNextCheckAt()
+            }
+        }
+        startAppMonitorUpdateScheduler()
+    }
+
+    func updateAppMonitorAutomaticUpdates(enabled: Bool) {
+        appMonitorAutomaticUpdatesEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.appMonitorAutomaticUpdatesEnabledKey)
+        if enabled, !appMonitorUpdateChecksEnabled {
+            updateAppMonitorUpdateSchedule(enabled: true)
+        }
     }
 
     func updateAutomaticUpdates(enabled: Bool) {
@@ -1212,7 +1389,7 @@ final class AppModel: ObservableObject {
 
     func showUpdates() {
         destination = .updates
-        lastMessage = availableUpdateCount == 0 ? "No available updates loaded" : "Showing \(availableUpdateCount) available updates"
+        lastMessage = availableUpdateCount == 0 ? "No installed app updates loaded" : "Showing \(availableUpdateCount) installed app updates"
     }
 
     func showAppList(_ filter: AppListQuickFilter) {
@@ -2604,6 +2781,226 @@ final class AppModel: ObservableObject {
         return inventoryScanner.app(at: bundleURL)
     }
 
+    private func appMonitorAppcastURL() -> URL? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else {
+            return nil
+        }
+        return URL(string: value)
+    }
+
+    private func fetchAppMonitorUpdateItem(from url: URL) async throws -> SparkleAppcastItem {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return try SparkleAppcastParser.latestItem(from: data)
+    }
+
+    private func appMonitorUpdateRecord(
+        from item: SparkleAppcastItem,
+        currentApp: MonitoredApp,
+        appcastURL: URL,
+        checkedAt: Date
+    ) -> AppUpdateRecord {
+        AppUpdateRecord(
+            appID: currentApp.id,
+            appName: "App Monitor",
+            bundleIdentifier: currentApp.bundleIdentifier,
+            appPath: currentApp.path,
+            source: .directDownload,
+            sourceIdentifier: appcastURL.absoluteString,
+            currentVersion: currentApp.version,
+            availableVersion: item.version,
+            status: .available,
+            checkedAt: checkedAt,
+            installActionTitle: "Install App Monitor Update",
+            installActionURL: item.url?.absoluteString,
+            requiresAdmin: false,
+            requiresRestart: true,
+            canInstall: true,
+            isAutoEligible: appMonitorAutomaticUpdatesEnabled,
+            releaseNotesTitle: item.title,
+            releaseNotesSummary: item.summary,
+            releaseNotesURL: item.releaseNotesURL?.absoluteString,
+            message: "Ready to install in place."
+        )
+    }
+
+    nonisolated private static func prepareAppMonitorUpdateInstall(
+        item: SparkleAppcastItem,
+        currentBundleURL: URL
+    ) async throws -> AppMonitorUpdateInstallPlan {
+        guard let packageURL = item.url else {
+            throw AppMonitorSelfUpdateError.missingPackageURL
+        }
+
+        let fileManager = FileManager.default
+        let workDirectoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("AppMonitorSelfUpdate-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: workDirectoryURL, withIntermediateDirectories: true)
+
+        let (downloadedURL, _) = try await URLSession.shared.download(from: packageURL)
+        let packageName = packageURL.lastPathComponent.isEmpty ? "AppMonitorUpdate" : packageURL.lastPathComponent
+        let packageFileURL = workDirectoryURL.appendingPathComponent(packageName)
+        try? fileManager.removeItem(at: packageFileURL)
+        try fileManager.moveItem(at: downloadedURL, to: packageFileURL)
+
+        if let expectedSHA256 = item.sha256?.trimmingCharacters(in: .whitespacesAndNewlines), !expectedSHA256.isEmpty {
+            let actualSHA256 = try sha256Hex(for: packageFileURL)
+            guard actualSHA256.caseInsensitiveCompare(expectedSHA256) == .orderedSame else {
+                throw AppMonitorSelfUpdateError.checksumMismatch
+            }
+        }
+
+        let extractedDirectoryURL = workDirectoryURL.appendingPathComponent("extracted", isDirectory: true)
+        try fileManager.createDirectory(at: extractedDirectoryURL, withIntermediateDirectories: true)
+        let stagedAppURL = workDirectoryURL.appendingPathComponent("App Monitor.app", isDirectory: true)
+        let packageExtension = packageFileURL.pathExtension.lowercased()
+
+        switch packageExtension {
+        case "zip":
+            try runProcess("/usr/bin/ditto", arguments: ["-x", "-k", packageFileURL.path, extractedDirectoryURL.path])
+            let appURL = try findAppMonitorApp(in: extractedDirectoryURL)
+            try copyAppBundle(from: appURL, to: stagedAppURL)
+        case "dmg":
+            let mountPointURL = workDirectoryURL.appendingPathComponent("mount", isDirectory: true)
+            try fileManager.createDirectory(at: mountPointURL, withIntermediateDirectories: true)
+            try runProcess("/usr/bin/hdiutil", arguments: ["attach", packageFileURL.path, "-nobrowse", "-readonly", "-mountpoint", mountPointURL.path])
+            defer {
+                try? runProcess("/usr/bin/hdiutil", arguments: ["detach", mountPointURL.path, "-quiet"])
+            }
+            let appURL = try findAppMonitorApp(in: mountPointURL)
+            try copyAppBundle(from: appURL, to: stagedAppURL)
+        default:
+            throw AppMonitorSelfUpdateError.unsupportedPackage(packageExtension.isEmpty ? "download" : packageExtension)
+        }
+
+        return AppMonitorUpdateInstallPlan(
+            stagedAppURL: stagedAppURL,
+            workDirectoryURL: workDirectoryURL,
+            currentBundleURL: currentBundleURL
+        )
+    }
+
+    nonisolated private static func copyAppBundle(from sourceURL: URL, to destinationURL: URL) throws {
+        try? FileManager.default.removeItem(at: destinationURL)
+        try runProcess("/usr/bin/ditto", arguments: [sourceURL.path, destinationURL.path])
+    }
+
+    nonisolated private static func findAppMonitorApp(in directoryURL: URL) throws -> URL {
+        guard let enumerator = FileManager.default.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw AppMonitorSelfUpdateError.appBundleNotFound
+        }
+
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "app" else { continue }
+            if url.lastPathComponent == "App Monitor.app" {
+                return url
+            }
+        }
+        throw AppMonitorSelfUpdateError.appBundleNotFound
+    }
+
+    nonisolated private static func sha256Hex(for url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func runProcess(_ executable: String, arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "AppMonitorSelfUpdate",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: output.isEmpty ? "\(executable) failed." : output]
+            )
+        }
+    }
+
+    private func launchAppMonitorUpdateInstaller(plan: AppMonitorUpdateInstallPlan) throws {
+        let scriptURL = plan.workDirectoryURL.appendingPathComponent("install-app-monitor-update.sh")
+        let currentPath = plan.currentBundleURL.path
+        let stagedPath = plan.stagedAppURL.path
+        let workPath = plan.workDirectoryURL.path
+        let backupPath = "\(currentPath).previous-update"
+
+        let quotedCurrentPath = Self.shellQuote(currentPath)
+        let quotedStagedPath = Self.shellQuote(stagedPath)
+        let quotedWorkPath = Self.shellQuote(workPath)
+        let quotedBackupPath = Self.shellQuote(backupPath)
+        let privilegedCommand = [
+            "if [ -e \(quotedCurrentPath) ]; then /bin/rm -rf \(quotedBackupPath); /bin/mv \(quotedCurrentPath) \(quotedBackupPath); fi",
+            "/usr/bin/ditto \(quotedStagedPath) \(quotedCurrentPath)",
+            "/usr/bin/xattr -cr \(quotedCurrentPath) >/dev/null 2>&1 || true"
+        ].joined(separator: "; ")
+        let osascriptExpression = "do shell script \(Self.appleScriptString(privilegedCommand)) with administrator privileges"
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        let script = """
+        #!/bin/zsh
+        set -u
+
+        CURRENT_APP=\(quotedCurrentPath)
+        STAGED_APP=\(quotedStagedPath)
+        WORK_DIR=\(quotedWorkPath)
+        BACKUP_APP=\(quotedBackupPath)
+        APP_PID=\(pid)
+
+        replace_without_privileges() {
+          /bin/rm -rf "$BACKUP_APP" || return 1
+          if [ -e "$CURRENT_APP" ]; then
+            /bin/mv "$CURRENT_APP" "$BACKUP_APP" || return 1
+          fi
+          /usr/bin/ditto "$STAGED_APP" "$CURRENT_APP" || return 1
+          /usr/bin/xattr -cr "$CURRENT_APP" >/dev/null 2>&1 || true
+          return 0
+        }
+
+        while /bin/kill -0 "$APP_PID" >/dev/null 2>&1; do
+          /bin/sleep 0.2
+        done
+
+        if replace_without_privileges; then
+          /usr/bin/open "$CURRENT_APP"
+          /bin/rm -rf "$BACKUP_APP" "$WORK_DIR"
+          exit 0
+        fi
+
+        /usr/bin/osascript -e \(Self.shellQuote(osascriptExpression)) || exit 1
+        /usr/bin/open "$CURRENT_APP"
+        /bin/rm -rf "$BACKUP_APP" "$WORK_DIR"
+        """
+
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = [scriptURL.path]
+        try process.run()
+    }
+
+    nonisolated private static func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    nonisolated private static func appleScriptString(_ value: String) -> String {
+        "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+    }
+
     private func recordWithCurrentAutoEligibility(_ record: AppUpdateRecord) -> AppUpdateRecord {
         record
     }
@@ -2809,6 +3206,23 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func nextAppMonitorUpdateCheckDate(from date: Date = Date()) -> Date {
+        date.addingTimeInterval(TimeInterval(max(1, appMonitorUpdateCadenceHours) * 3600))
+    }
+
+    private func updateNextAppMonitorUpdateCheck(from date: Date = Date()) {
+        appMonitorUpdateNextCheckAt = appMonitorUpdateChecksEnabled ? nextAppMonitorUpdateCheckDate(from: date) : nil
+        persistAppMonitorUpdateNextCheckAt()
+    }
+
+    private func persistAppMonitorUpdateNextCheckAt() {
+        if let appMonitorUpdateNextCheckAt {
+            UserDefaults.standard.set(appMonitorUpdateNextCheckAt, forKey: Self.appMonitorUpdateNextCheckAtKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.appMonitorUpdateNextCheckAtKey)
+        }
+    }
+
     private func markScanCompleted() {
         scanSchedule.lastScanAt = Date()
         if scanSchedule.isEnabled {
@@ -2846,6 +3260,28 @@ final class AppModel: ObservableObject {
                     return
                 }
                 await self.checkForUpdates(runAutomaticEligible: self.updateSettings.automaticUpdatesEnabled)
+            }
+        }
+    }
+
+    private func startAppMonitorUpdateScheduler() {
+        appMonitorUpdateSchedulerTimer?.invalidate()
+        guard appMonitorUpdateChecksEnabled else { return }
+        if appMonitorUpdateNextCheckAt == nil {
+            appMonitorUpdateNextCheckAt = nextAppMonitorUpdateCheckDate()
+            persistAppMonitorUpdateNextCheckAt()
+        }
+        appMonitorUpdateSchedulerTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self,
+                      let nextCheckAt = self.appMonitorUpdateNextCheckAt,
+                      nextCheckAt <= Date(),
+                      !self.isCheckingAppMonitorUpdate,
+                      !self.isInstallingAppMonitorUpdate
+                else {
+                    return
+                }
+                await self.checkForAppMonitorUpdate(installIfAvailable: self.appMonitorAutomaticUpdatesEnabled)
             }
         }
     }

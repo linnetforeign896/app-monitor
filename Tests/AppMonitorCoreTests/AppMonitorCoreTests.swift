@@ -807,7 +807,7 @@ final class AppMonitorCoreTests: XCTestCase {
               <title>Version 2.0</title>
               <description>Added faster scans and fixed crashes.</description>
               <sparkle:releaseNotesLink>https://example.com/releases/2.0</sparkle:releaseNotesLink>
-              <enclosure url="https://example.com/Sample.zip" sparkle:shortVersionString="2.0" sparkle:version="200" />
+              <enclosure url="https://example.com/Sample.zip" sparkle:shortVersionString="2.0" sparkle:version="200" sparkle:sha256="abcdef" />
             </item>
           </channel>
         </rss>
@@ -820,6 +820,7 @@ final class AppMonitorCoreTests: XCTestCase {
         XCTAssertEqual(item.url?.absoluteString, "https://example.com/Sample.zip")
         XCTAssertEqual(item.summary, "Added faster scans and fixed crashes.")
         XCTAssertEqual(item.releaseNotesURL?.absoluteString, "https://example.com/releases/2.0")
+        XCTAssertEqual(item.sha256, "abcdef")
     }
 
     func testChangeLogEntryBuildsFromUpdateRecordAndResult() {
