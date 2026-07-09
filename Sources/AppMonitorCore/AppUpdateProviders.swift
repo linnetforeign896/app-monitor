@@ -33,16 +33,28 @@ public struct ProcessUpdateCommandRunner: UpdateCommandRunning {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
         do {
             try process.run()
             process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8)?
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let standardOutput = String(data: outputData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let standardError = String(data: errorData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let output: String
+            if process.terminationStatus == 0 {
+                output = standardOutput.isEmpty ? standardError : standardOutput
+            } else {
+                output = [standardOutput, standardError]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
+            }
             return ShellCommandResult(exitCode: process.terminationStatus, output: output)
         } catch {
             return ShellCommandResult(exitCode: 127, output: error.localizedDescription)
@@ -110,22 +122,49 @@ public struct MacAppStoreUpdateProvider: AppUpdateProvider, @unchecked Sendable 
     }
 
     public static func parseOutdated(json: String, apps: [MonitoredApp], checkedAt: Date = Date()) -> [AppUpdateRecord] {
-        guard let data = json.data(using: .utf8),
-              let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        guard let objects = jsonObjectList(from: json) else {
             return []
         }
-        let appsByBundleID = Dictionary(uniqueKeysWithValues: apps.compactMap { app in
-            app.bundleIdentifier.map { ($0, app) }
-        })
+        let appsByBundleID = appLookupByBundleID(apps)
 
         return objects.compactMap { object in
-            let bundleID = stringValue(object["bundleID"] ?? object["bundleIdentifier"] ?? object["bundle_id"])
-            let appStoreID = stringValue(object["appID"] ?? object["appId"] ?? object["id"])
+            let bundleID = stringValue(
+                object["bundleID"]
+                    ?? object["bundleId"]
+                    ?? object["bundleIdentifier"]
+                    ?? object["bundle_id"]
+            )
+            let appStoreID = stringValue(
+                object["appID"]
+                    ?? object["appId"]
+                    ?? object["adamID"]
+                    ?? object["adamId"]
+                    ?? object["id"]
+            )
             let matchedApp = bundleID.flatMap { appsByBundleID[$0] }
-            let name = stringValue(object["title"] ?? object["name"]) ?? matchedApp?.name ?? "Mac App Store App"
-            let currentVersion = stringValue(object["installedVersion"] ?? object["currentVersion"] ?? object["installed"])
+            let name = stringValue(
+                object["title"]
+                    ?? object["name"]
+                    ?? object["displayName"]
+                    ?? object["displayNameWithExtensions"]
+            ) ?? matchedApp?.name ?? "Mac App Store App"
+            let explicitCurrentVersion = stringValue(
+                object["installedVersion"]
+                    ?? object["currentVersion"]
+                    ?? object["installed"]
+            )
+            let masCurrentVersion = object["newVersion"] == nil ? nil : stringValue(object["version"])
+            let currentVersion = explicitCurrentVersion
+                ?? masCurrentVersion
                 ?? matchedApp?.version
-            let availableVersion = stringValue(object["version"] ?? object["latestVersion"] ?? object["availableVersion"])
+            let legacyAvailableVersion = explicitCurrentVersion == nil ? nil : stringValue(object["version"])
+            let availableVersion = stringValue(
+                object["newVersion"]
+                    ?? object["latestVersion"]
+                    ?? object["availableVersion"]
+                    ?? object["available"]
+            ) ?? legacyAvailableVersion
+                ?? (explicitCurrentVersion == nil && masCurrentVersion == nil ? stringValue(object["version"]) : nil)
             let sourceIdentifier = appStoreID ?? bundleID ?? name
             return AppUpdateRecord(
                 appID: matchedApp?.id,
@@ -147,6 +186,18 @@ public struct MacAppStoreUpdateProvider: AppUpdateProvider, @unchecked Sendable 
             )
         }
     }
+}
+
+private func appLookupByBundleID(_ apps: [MonitoredApp]) -> [String: MonitoredApp] {
+    var lookup: [String: MonitoredApp] = [:]
+    for app in apps {
+        guard let bundleIdentifier = app.bundleIdentifier,
+              lookup[bundleIdentifier] == nil else {
+            continue
+        }
+        lookup[bundleIdentifier] = app
+    }
+    return lookup
 }
 
 public struct HomebrewUpdateProvider: AppUpdateProvider, @unchecked Sendable {
@@ -471,19 +522,28 @@ public struct DirectDownloadUpdateProvider: AppUpdateProvider, @unchecked Sendab
     }
 }
 
-public struct SparkleAppcastItem: Hashable {
+public struct SparkleAppcastItem: Hashable, Sendable {
     public let version: String?
     public let title: String?
     public let url: URL?
     public let summary: String?
     public let releaseNotesURL: URL?
+    public let sha256: String?
 
-    public init(version: String?, title: String?, url: URL?, summary: String? = nil, releaseNotesURL: URL? = nil) {
+    public init(
+        version: String?,
+        title: String?,
+        url: URL?,
+        summary: String? = nil,
+        releaseNotesURL: URL? = nil,
+        sha256: String? = nil
+    ) {
         self.version = version
         self.title = title
         self.url = url
         self.summary = summary
         self.releaseNotesURL = releaseNotesURL
+        self.sha256 = sha256
     }
 }
 
@@ -543,6 +603,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
     private var currentReleaseNotesURL: URL?
     private var currentVersion: String?
     private var currentURL: URL?
+    private var currentSHA256: String?
 
     func parser(
         _ parser: XMLParser,
@@ -559,6 +620,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
             currentReleaseNotesURL = nil
             currentVersion = nil
             currentURL = nil
+            currentSHA256 = nil
         }
         guard isInsideItem else { return }
         if elementName == "enclosure" {
@@ -566,6 +628,7 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
                 ?? attributeDict["sparkle:version"]
                 ?? currentVersion
             currentURL = attributeDict["url"].flatMap(URL.init(string:))
+            currentSHA256 = attributeDict["sparkle:sha256"] ?? currentSHA256
             currentReleaseNotesURL = attributeDict["sparkle:releaseNotesLink"].flatMap(URL.init(string:))
                 ?? currentReleaseNotesURL
         }
@@ -578,6 +641,16 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
             currentTitle += string
         case "description":
             currentSummary += string
+        case "sparkle:shortVersionString", "shortVersionString":
+            let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty {
+                currentVersion = value
+            }
+        case "sparkle:version", "version":
+            let value = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty, currentVersion == nil {
+                currentVersion = value
+            }
         case "sparkle:releaseNotesLink", "releaseNotesLink":
             currentReleaseNotesURL = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)) ?? currentReleaseNotesURL
         default:
@@ -597,7 +670,8 @@ private final class SparkleParserDelegate: NSObject, XMLParserDelegate {
                 title: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines),
                 url: currentURL,
                 summary: currentSummary.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-                releaseNotesURL: currentReleaseNotesURL
+                releaseNotesURL: currentReleaseNotesURL,
+                sha256: currentSHA256
             ))
             isInsideItem = false
         }
@@ -676,6 +750,57 @@ private func stringArrayValue(_ value: Any?) -> [String] {
         return values.compactMap(stringValue)
     }
     return stringValue(value).map { [$0] } ?? []
+}
+
+private func jsonObjectList(from output: String) -> [[String: Any]]? {
+    for candidate in jsonPayloadCandidates(from: output) {
+        guard let data = candidate.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data),
+              let objects = objectList(from: root) else {
+            continue
+        }
+        return objects
+    }
+
+    let lineObjects = output
+        .split(separator: "\n")
+        .compactMap { line -> [String: Any]? in
+            guard let data = line.data(using: .utf8) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+    return lineObjects.isEmpty ? nil : lineObjects
+}
+
+private func jsonPayloadCandidates(from output: String) -> [String] {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return [] }
+
+    var candidates = [trimmed]
+    if let start = trimmed.firstIndex(where: { $0 == "{" || $0 == "[" }) {
+        let closer: Character = trimmed[start] == "{" ? "}" : "]"
+        if let end = trimmed.lastIndex(of: closer) {
+            let payload = String(trimmed[start...end])
+            if payload != trimmed {
+                candidates.append(payload)
+            }
+        }
+    }
+    return candidates
+}
+
+private func objectList(from root: Any) -> [[String: Any]]? {
+    if let objects = root as? [[String: Any]] {
+        return objects
+    }
+    guard let object = root as? [String: Any] else {
+        return nil
+    }
+    for key in ["apps", "items", "updates", "outdated"] {
+        if let objects = object[key] as? [[String: Any]] {
+            return objects
+        }
+    }
+    return [object]
 }
 
 private func normalizeName(_ value: String) -> String {

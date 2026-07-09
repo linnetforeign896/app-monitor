@@ -686,6 +686,55 @@ final class AppMonitorCoreTests: XCTestCase {
         XCTAssertTrue(records[0].requiresAdmin)
     }
 
+    func testMacAppStoreOutdatedParserAllowsDuplicateBundleIDs() {
+        let primary = sampleApp(name: "Sample App", bundleID: "com.example.sample", path: "/Applications/Sample.app")
+        let duplicate = sampleApp(name: "Sample App Copy", bundleID: "com.example.sample", path: "/Volumes/Backup/Sample.app")
+        let checkedAt = Date(timeIntervalSince1970: 2_025)
+        let json = """
+        [
+          {
+            "appID": 123456,
+            "bundleID": "com.example.sample",
+            "title": "Sample App",
+            "installedVersion": "1.0",
+            "version": "2.0"
+          }
+        ]
+        """
+
+        let records = MacAppStoreUpdateProvider.parseOutdated(json: json, apps: [primary, duplicate], checkedAt: checkedAt)
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].appID, primary.id)
+        XCTAssertEqual(records[0].appPath, primary.path)
+        XCTAssertEqual(records[0].bundleIdentifier, "com.example.sample")
+        XCTAssertEqual(records[0].availableVersion, "2.0")
+    }
+
+    func testMacAppStoreOutdatedParserReadsMasSevenSingleObjectOutput() {
+        let app = sampleApp(
+            name: "Did I Copy It?",
+            bundleID: "com.underratedsoftware.didicopyit",
+            path: "/Applications/Did I Copy It?.app"
+        )
+        let checkedAt = Date(timeIntervalSince1970: 2_050)
+        let json = """
+        Warning: Found a likely App Store app that is not indexed in Spotlight
+        {"adamID":6784293008,"bundleID":"com.underratedsoftware.didicopyit","displayName":"Did I Copy It?.app","name":"Did I Copy It?","path":"/Applications/Did I Copy It?.app","version":"1.0.0","newVersion":"1.1.0"}
+        """
+
+        let records = MacAppStoreUpdateProvider.parseOutdated(json: json, apps: [app], checkedAt: checkedAt)
+
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].appID, app.id)
+        XCTAssertEqual(records[0].appName, "Did I Copy It?")
+        XCTAssertEqual(records[0].bundleIdentifier, "com.underratedsoftware.didicopyit")
+        XCTAssertEqual(records[0].sourceIdentifier, "6784293008")
+        XCTAssertEqual(records[0].currentVersion, "1.0.0")
+        XCTAssertEqual(records[0].availableVersion, "1.1.0")
+        XCTAssertEqual(records[0].status, .needsAdmin)
+    }
+
     func testHomebrewOutdatedParserIncludesCasksAndFormulae() {
         let app = sampleApp(name: "Sample App", bundleID: "com.example.sample", path: "/Applications/Sample App.app")
         let checkedAt = Date(timeIntervalSince1970: 2_100)
@@ -758,7 +807,7 @@ final class AppMonitorCoreTests: XCTestCase {
               <title>Version 2.0</title>
               <description>Added faster scans and fixed crashes.</description>
               <sparkle:releaseNotesLink>https://example.com/releases/2.0</sparkle:releaseNotesLink>
-              <enclosure url="https://example.com/Sample.zip" sparkle:shortVersionString="2.0" sparkle:version="200" />
+              <enclosure url="https://example.com/Sample.zip" sparkle:shortVersionString="2.0" sparkle:version="200" sparkle:sha256="abcdef" />
             </item>
           </channel>
         </rss>
@@ -771,6 +820,7 @@ final class AppMonitorCoreTests: XCTestCase {
         XCTAssertEqual(item.url?.absoluteString, "https://example.com/Sample.zip")
         XCTAssertEqual(item.summary, "Added faster scans and fixed crashes.")
         XCTAssertEqual(item.releaseNotesURL?.absoluteString, "https://example.com/releases/2.0")
+        XCTAssertEqual(item.sha256, "abcdef")
     }
 
     func testChangeLogEntryBuildsFromUpdateRecordAndResult() {

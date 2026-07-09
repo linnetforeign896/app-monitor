@@ -182,7 +182,7 @@ private struct SidebarView: View {
                     Button {
                         model.showUpdates()
                     } label: {
-                        SidebarMetricItem(title: "Updates", systemImage: "arrow.down.circle", value: updateCountText, badgeColor: DashboardTheme.blue.opacity(0.13), valueColor: DashboardTheme.blue, isSelected: model.destination == .updates)
+                        SidebarMetricItem(title: "App Updates", systemImage: "arrow.down.circle", value: updateCountText, badgeColor: DashboardTheme.blue.opacity(0.13), valueColor: DashboardTheme.blue, isSelected: model.destination == .updates)
                     }
                     .buttonStyle(.plain)
                     Button {
@@ -3364,7 +3364,7 @@ private struct UpdatesScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            ScreenHeader(title: "Updates", subtitle: "Mac App Store, Homebrew, Apple software, and direct-download update management")
+            ScreenHeader(title: "Installed App Updates", subtitle: "Mac App Store, Homebrew, Apple software, and direct-download update management")
                 .padding(.top, 6)
 
             LazyVGrid(columns: columns, spacing: 12) {
@@ -3390,7 +3390,7 @@ private struct UpdatesScreen: View {
                         Button {
                             Task { await model.checkForUpdates() }
                         } label: {
-                            Label("Check Updates", systemImage: "arrow.clockwise")
+                            Label("Check Installed Apps", systemImage: "arrow.clockwise")
                         }
                         .disabled(model.isCheckingUpdates || model.isRunningUpdates)
                         Button {
@@ -3408,7 +3408,7 @@ private struct UpdatesScreen: View {
                     }
 
                     if model.updateRecords.isEmpty {
-                        EmptyCardState(systemImage: "arrow.down.circle", message: "Run an update check to populate available app and system updates.")
+                        EmptyCardState(systemImage: "arrow.down.circle", message: "Run an installed-app update check to populate available app and system updates.")
                             .frame(height: 220)
                     } else {
                         VStack(spacing: 0) {
@@ -4644,15 +4644,61 @@ private struct SettingsScreen: View {
                     DashboardDetailLine(title: "Login Item Status", value: model.loginItemStatus)
                     Toggle("Show ignored apps in tables", isOn: $model.includeIgnoredApps)
                     Divider()
-                    Toggle("Enable scheduled update checks", isOn: Binding(
+                    SettingsSectionHeader(title: "App Monitor Updates", systemImage: "app.badge")
+                    Toggle("Automatically check for App Monitor updates", isOn: Binding(
+                        get: { model.appMonitorUpdateChecksEnabled },
+                        set: { model.updateAppMonitorUpdateSchedule(enabled: $0) }
+                    ))
+                    Toggle("Automatically install App Monitor updates", isOn: Binding(
+                        get: { model.appMonitorAutomaticUpdatesEnabled },
+                        set: { model.updateAppMonitorAutomaticUpdates(enabled: $0) }
+                    ))
+                    Picker("App Monitor cadence", selection: Binding(
+                        get: { model.appMonitorUpdateCadenceHours },
+                        set: { model.updateAppMonitorUpdateSchedule(cadenceHours: $0) }
+                    )) {
+                        Text("Every 6 hours").tag(6)
+                        Text("Every 12 hours").tag(12)
+                        Text("Daily").tag(24)
+                        Text("Weekly").tag(168)
+                    }
+                    .pickerStyle(.segmented)
+                    HStack(alignment: .center, spacing: 12) {
+                        DashboardDetailLine(title: "Last App Monitor Check", value: AppMonitorFormatting.shortDateTime(model.appMonitorUpdateLastCheckAt))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            Task { await model.checkForAppMonitorUpdate() }
+                        } label: {
+                            Label(model.isCheckingAppMonitorUpdate ? "Checking" : "Check App Monitor", systemImage: "arrow.clockwise")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isCheckingAppMonitorUpdate || model.isInstallingAppMonitorUpdate)
+                    }
+                    DashboardDetailLine(title: "Next App Monitor Check", value: AppMonitorFormatting.shortDateTime(model.appMonitorUpdateNextCheckAt))
+                    DashboardDetailLine(title: "App Monitor Update Status", value: model.appMonitorUpdateMessage)
+                    if model.appMonitorUpdateRecord != nil {
+                        Button {
+                            Task { await model.installAppMonitorUpdate() }
+                        } label: {
+                            Label(model.isInstallingAppMonitorUpdate ? "Installing App Monitor" : "Install App Monitor Update", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isInstallingAppMonitorUpdate || model.isCheckingAppMonitorUpdate)
+                    }
+                    Divider()
+                    SettingsSectionHeader(title: "Installed App Update Discovery", systemImage: "square.stack.3d.up")
+                    Toggle("Enable scheduled installed-app checks", isOn: Binding(
                         get: { model.updateSettings.scheduledChecksEnabled },
                         set: { model.updateUpdateSchedule(enabled: $0) }
                     ))
-                    Toggle("Automatically install eligible updates", isOn: Binding(
+                    Toggle("Automatically install eligible app updates", isOn: Binding(
                         get: { model.updateSettings.automaticUpdatesEnabled },
                         set: { model.updateAutomaticUpdates(enabled: $0) }
                     ))
-                    Picker("Update cadence", selection: Binding(
+                    Picker("Installed app cadence", selection: Binding(
                         get: { model.updateSettings.cadenceHours },
                         set: { model.updateUpdateSchedule(cadenceHours: $0) }
                     )) {
@@ -4674,7 +4720,20 @@ private struct SettingsScreen: View {
                         get: { model.updateSettings.includeDirectDownloadDetection },
                         set: { model.updateUpdateSourceSettings(includeDirectDownloadDetection: $0) }
                     ))
-                    DashboardDetailLine(title: "Next Update Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.nextCheckAt))
+                    HStack(alignment: .center, spacing: 12) {
+                        DashboardDetailLine(title: "Last Installed App Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.lastCheckAt))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            Task { await model.checkForUpdates() }
+                        } label: {
+                            Label(model.isCheckingUpdates ? "Checking" : "Check Installed Apps", systemImage: "arrow.clockwise")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isCheckingUpdates || model.isRunningUpdates)
+                    }
+                    DashboardDetailLine(title: "Next Installed App Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.nextCheckAt))
                     Divider()
                     HStack(spacing: 12) {
                         Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -4699,6 +4758,22 @@ private struct SettingsScreen: View {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct SettingsSectionHeader: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(DashboardTheme.accent)
+                .frame(width: 18)
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DashboardTheme.primaryText)
         }
     }
 }
@@ -5507,7 +5582,7 @@ private struct DashboardToolbar: View {
                 Button {
                     Task { await model.checkForUpdates() }
                 } label: {
-                    ToolbarControl(title: model.isCheckingUpdates ? "Checking" : "Updates", systemImage: "arrow.down.circle")
+                    ToolbarControl(title: model.isCheckingUpdates ? "Checking" : "App Updates", systemImage: "arrow.down.circle")
                 }
                 .buttonStyle(.plain)
                 .disabled(model.isCheckingUpdates || model.isRunningUpdates)
@@ -5579,8 +5654,8 @@ private struct DashboardToolbar: View {
     private var visibleUpdateProgress: OperationProgressSnapshot {
         guard model.updateProgress.isVisible else {
             return OperationProgressSnapshot(
-                title: model.isCheckingUpdates ? "Checking updates" : "Running updates",
-                detail: model.isCheckingUpdates ? "Checking providers..." : "Installing selected updates...",
+                title: model.isCheckingUpdates ? "Checking installed app updates" : "Running installed app updates",
+                detail: model.isCheckingUpdates ? "Checking installed app providers..." : "Installing selected app updates...",
                 completedUnitCount: 0,
                 totalUnitCount: max(model.updateRecords.count, 1),
                 currentPath: nil,

@@ -36,8 +36,8 @@ struct AppMonitorApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
-                Button("Check for Updates") {
-                    Task { await model.checkForUpdates() }
+                Button("Check for App Monitor Updates") {
+                    Task { await model.checkForAppMonitorUpdate() }
                 }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
 
