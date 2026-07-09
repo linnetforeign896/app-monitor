@@ -44,6 +44,66 @@ The local packaging command writes:
 
 The DMG contains `App Monitor.app` plus an `/Applications` symlink for drag-and-drop install. It also embeds `AppMonitorIcon.icns` as the Finder volume icon.
 
+## Homebrew Beta Cask
+
+App Monitor is a macOS GUI app, so Homebrew distribution should use a cask, not a formula. Start with a personal tap instead of the upstream Homebrew cask repository while the app is in beta.
+
+Use versioned beta release tags so Homebrew can upgrade predictably. For app version `1.1.0` and build `2`, use tag `v1.1.0-beta.2`:
+
+```bash
+VERSION=1.1.0
+BUILD=2
+TAG="v${VERSION}-beta.${BUILD}"
+
+APP_MONITOR_TAG="$TAG" ./scripts/package_release.sh "$VERSION" "$BUILD"
+gh release create "$TAG" \
+  build/release/App-Monitor-Beta.zip \
+  build/release/App-Monitor-Beta.dmg \
+  build/release/appcast.xml \
+  build/release/SHA256SUMS \
+  --target main \
+  --title "App Monitor ${VERSION} beta ${BUILD}" \
+  --notes "App Monitor beta release."
+```
+
+Then generate the Homebrew cask:
+
+```bash
+./scripts/generate_homebrew_beta_cask.sh "$VERSION" "$BUILD"
+```
+
+The generated file is written to:
+
+```text
+build/homebrew/Casks/app-monitor@beta.rb
+```
+
+Create a tap once:
+
+```bash
+brew tap-new jcranokc/homebrew-tap
+```
+
+Copy the generated cask into the tap and test it:
+
+```bash
+TAP_ROOT="$(brew --repository jcranokc/tap)"
+mkdir -p "$TAP_ROOT/Casks"
+cp build/homebrew/Casks/app-monitor@beta.rb "$TAP_ROOT/Casks/app-monitor@beta.rb"
+
+brew audit --cask --strict --skip-style jcranokc/tap/app-monitor@beta
+brew style --cask jcranokc/tap/app-monitor@beta
+brew install --cask jcranokc/tap/app-monitor@beta
+```
+
+After the local install works, commit and push the tap repository. Users can install the beta with:
+
+```bash
+brew install --cask jcranokc/tap/app-monitor@beta
+```
+
+For each new beta, publish a new `v<version>-beta.<build>` GitHub release, regenerate the cask so its `version` and `sha256` change, then commit the updated cask in the tap. This is what lets `brew upgrade` pick up the beta.
+
 ## Developer ID Signing And Notarization
 
 An ad-hoc signed app will still trigger Gatekeeper warnings after download. For public distribution outside the Mac App Store, use a paid Apple Developer account with a Developer ID Application certificate, hardened runtime, and notarization.
@@ -107,14 +167,14 @@ After you make a change and commit it:
 
 ```bash
 git push origin main
-./scripts/package_release.sh 1.1.0 2
-gh release create beta \
+APP_MONITOR_TAG="v1.1.0-beta.2" ./scripts/package_release.sh 1.1.0 2
+gh release create v1.1.0-beta.2 \
   build/release/App-Monitor-Beta.zip \
   build/release/App-Monitor-Beta.dmg \
   build/release/appcast.xml \
   build/release/SHA256SUMS \
   --target main \
-  --title "App Monitor Beta" \
+  --title "App Monitor 1.1.0 beta 2" \
   --notes "App Monitor beta release."
 ```
 
