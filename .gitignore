@@ -15,4 +15,7 @@ DerivedData/
 # Internal design QA artifacts from local implementation work
 /design-evidence/
 /design-qa.md
-/docs/
+/docs/*
+!/docs/assets/
+/docs/assets/*
+!/docs/assets/app-monitor-*.png

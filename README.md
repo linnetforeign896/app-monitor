@@ -4,6 +4,22 @@ App Monitor is a local-first macOS utility for understanding application usage, 
 
 The app is built as a Swift Package executable with a lightweight SQLite-backed core. It runs as a standard macOS app with an optional menu bar presence.
 
+## Screenshots
+
+![App Monitor overview dashboard](docs/assets/app-monitor-overview.png)
+
+| Usage Trends | Activity Timeline |
+| --- | --- |
+| ![Usage trends dashboard](docs/assets/app-monitor-usage-trends.png) | ![Activity timeline dashboard](docs/assets/app-monitor-activity-timeline.png) |
+
+| Warnings | Updates |
+| --- | --- |
+| ![Warnings dashboard](docs/assets/app-monitor-warnings.png) | ![Updates dashboard](docs/assets/app-monitor-updates.png) |
+
+| Cleanup Suggestions | History |
+| --- | --- |
+| ![Cleanup suggestions dashboard](docs/assets/app-monitor-cleanup-suggestions.png) | ![History dashboard](docs/assets/app-monitor-history.png) |
+
 ## Features
 
 - App inventory across common macOS application locations, with optional broader bundle discovery.
