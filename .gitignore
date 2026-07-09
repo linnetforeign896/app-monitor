@@ -1,0 +1,18 @@
+.build/
+build/
+.DS_Store
+*.xcuserstate
+DerivedData/
+*.xcresult
+.swiftpm/
+
+# Local runtime data and exports
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.csv
+
+# Internal design QA artifacts from local implementation work
+/design-evidence/
+/design-qa.md
+/docs/
