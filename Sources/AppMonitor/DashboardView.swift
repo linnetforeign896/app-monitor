@@ -4674,6 +4674,19 @@ private struct SettingsScreen: View {
                         get: { model.updateSettings.includeDirectDownloadDetection },
                         set: { model.updateUpdateSourceSettings(includeDirectDownloadDetection: $0) }
                     ))
+                    HStack(alignment: .center, spacing: 12) {
+                        DashboardDetailLine(title: "Last Update Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.lastCheckAt))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            Task { await model.checkForUpdates() }
+                        } label: {
+                            Label(model.isCheckingUpdates ? "Checking" : "Check for Updates", systemImage: "arrow.clockwise")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(model.isCheckingUpdates || model.isRunningUpdates)
+                    }
                     DashboardDetailLine(title: "Next Update Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.nextCheckAt))
                     Divider()
                     HStack(spacing: 12) {
