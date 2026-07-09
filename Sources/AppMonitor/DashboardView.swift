@@ -4675,6 +4675,28 @@ private struct SettingsScreen: View {
                         set: { model.updateUpdateSourceSettings(includeDirectDownloadDetection: $0) }
                     ))
                     DashboardDetailLine(title: "Next Update Check", value: AppMonitorFormatting.shortDateTime(model.updateSettings.nextCheckAt))
+                    Divider()
+                    HStack(spacing: 12) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .foregroundStyle(DashboardTheme.blue)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("GitHub Repository")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DashboardTheme.primaryText)
+                            Text("github.com/jcranokc/app-monitor")
+                                .font(.caption)
+                                .foregroundStyle(DashboardTheme.secondaryText)
+                        }
+                        Spacer()
+                        Button {
+                            model.openGitHubRepository()
+                        } label: {
+                            Label("Open GitHub", systemImage: "arrow.up.forward.app")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
             }
         }

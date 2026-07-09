@@ -635,7 +635,7 @@ final class AppModel: ObservableObject {
         lastMessage = "Checking for app updates..."
 
         do {
-            let apps = try dataStore.fetchApps(includeAll: true)
+            let apps = try appsForUpdateChecks()
             let providers = makeUpdateProviders(settings: updateSettings)
             var records: [AppUpdateRecord] = []
 
@@ -725,6 +725,11 @@ final class AppModel: ObservableObject {
 
     func openChangeLogReleaseNotes(_ entry: AppChangeLogEntry) {
         guard let urlString = entry.releaseNotesURL, let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openGitHubRepository() {
+        guard let url = URL(string: "https://github.com/jcranokc/app-monitor") else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -2581,6 +2586,22 @@ final class AppModel: ObservableObject {
         case .directDownload, .unknown:
             return DirectDownloadUpdateProvider()
         }
+    }
+
+    private func appsForUpdateChecks() throws -> [MonitoredApp] {
+        var apps = try dataStore.fetchApps(includeAll: true)
+        guard let currentApp = currentAppForUpdateDetection(),
+              !apps.contains(where: { $0.id == currentApp.id || $0.path == currentApp.path }) else {
+            return apps
+        }
+        apps.append(currentApp)
+        return apps
+    }
+
+    private func currentAppForUpdateDetection() -> MonitoredApp? {
+        let bundleURL = Bundle.main.bundleURL.standardizedFileURL
+        guard bundleURL.pathExtension == "app" else { return nil }
+        return inventoryScanner.app(at: bundleURL)
     }
 
     private func recordWithCurrentAutoEligibility(_ record: AppUpdateRecord) -> AppUpdateRecord {
